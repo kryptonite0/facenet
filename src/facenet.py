@@ -41,6 +41,10 @@ from tensorflow.python.platform import gfile
 import math
 from six import iteritems
 
+import sys
+sys.path.append("/jet/prs/rxrx1-utils")
+import rxrx.io as rio
+
 def triplet_loss(anchor, positive, negative, alpha):
     """Calculate the triplet loss according to the FaceNet paper
     
@@ -313,21 +317,50 @@ class ImageClass():
   
     def __len__(self):
         return len(self.image_paths)
-  
-def get_dataset(path, has_class_directories=True):
-    dataset = []
-    path_exp = os.path.expanduser(path)
-    classes = [path for path in os.listdir(path_exp) \
-                    if os.path.isdir(os.path.join(path_exp, path))]
+
+def get_control_datasets(image_size=512, basepath_data="/jet/prs/data/"):
+    
+    # load image metadata
+    print("Reading RXRX1 metadata...")
+    df = rio.combine_metadata()
+    
+    # get control samples only
+#     df_contr = df[df["well_type"].isin(["positive_control"])]
+    df_contr = df[(df["dataset"]=="train") & (df["well_type"]=="positive_control")].head(1000)
+    print(f"Metadata dataframe for POSITIVE CONTROL wells shape: {df_contr.shape}")
+    
+    # create dictionary of empty datasets
+    datasets = {"train" : [], "test" : []}
+    
+    # check number of classes
+    classes = df_contr["sirna"].astype("int").astype("str").unique()
     classes.sort()
-    nrof_classes = len(classes)
-    for i in range(nrof_classes):
-        class_name = classes[i]
-        facedir = os.path.join(path_exp, class_name)
-        image_paths = get_image_paths(facedir)
-        dataset.append(ImageClass(class_name, image_paths))
-  
-    return dataset
+    print(f"Number of siRNA classes: {len(classes)}")
+    print("Classes: {} etc.".format(', '.join([classes[i] for i in range(4)])))
+    
+    # check class distribution across datasets
+    print("\nStats on number of images per class per dataset:")
+    print(df_contr.groupby(["sirna", "dataset"]).size().unstack().describe(), "\n")
+    
+    # fill up datasets
+    for class_name, df_contr_cl in df_contr.groupby("sirna"):
+        for dataset_name, df_contr_cl_ds in df_contr_cl.groupby("dataset"):
+            image_paths = []
+            for row in df_contr_cl_ds.itertuples():
+                id_code = row.Index
+                site = row.site
+                image_path = basepath_data + f"rgb_{image_size}/" + f"{dataset_name}/" + f"{id_code}_s{site}.jpg"
+                image_paths.append(image_path)
+            datasets[dataset_name].append(ImageClass(int(class_name), image_paths))
+        
+    # print number of classes and images across datasets
+    for dataset_name in datasets.keys():
+        print("{} dataset has {} classes and {} images"\
+          .format(dataset_name, len(datasets[dataset_name]), 
+                  np.sum([len(ic.image_paths) for ic in datasets[dataset_name]]) ))
+    print("\n")
+    
+    return datasets
 
 def get_image_paths(facedir):
     image_paths = []

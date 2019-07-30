@@ -44,7 +44,8 @@ from tensorflow.python.ops import data_flow_ops
 from six.moves import xrange  # @UnresolvedImport
 
 def main(args):
-  
+    
+    print(f"Using {args.model_def} backbone.")
     network = importlib.import_module(args.model_def)
 
     subdir = datetime.strftime(datetime.now(), '%Y%m%d-%H%M%S')
@@ -63,19 +64,22 @@ def main(args):
     facenet.store_revision_info(src_path, log_dir, ' '.join(sys.argv))
 
     np.random.seed(seed=args.seed)
-    train_set = facenet.get_dataset(args.data_dir)
+    datasets = facenet.get_control_datasets()
+    train_set = datasets["train"]
+    test_set = datasets["test"]
+#     train_set = facenet.get_dataset(args.data_dir)
     
     print('Model directory: %s' % model_dir)
     print('Log directory: %s' % log_dir)
     if args.pretrained_model:
         print('Pre-trained model: %s' % os.path.expanduser(args.pretrained_model))
     
-    if args.lfw_dir:
-        print('LFW directory: %s' % args.lfw_dir)
-        # Read the file containing the pairs used for testing
-        pairs = lfw.read_pairs(os.path.expanduser(args.lfw_pairs))
-        # Get the paths for the corresponding images
-        lfw_paths, actual_issame = lfw.get_paths(os.path.expanduser(args.lfw_dir), pairs)
+#     if args.lfw_dir:
+#         print('LFW directory: %s' % args.lfw_dir)
+#         # Read the file containing the pairs used for testing
+#         pairs = lfw.read_pairs(os.path.expanduser(args.lfw_pairs))
+#         # Get the paths for the corresponding images
+#         lfw_paths, actual_issame = lfw.get_paths(os.path.expanduser(args.lfw_dir), pairs)
         
     
     with tf.Graph().as_default():
@@ -101,22 +105,31 @@ def main(args):
         nrof_preprocess_threads = 4
         images_and_labels = []
         for _ in range(nrof_preprocess_threads):
+            
             filenames, label = input_queue.dequeue()
             images = []
             for filename in tf.unstack(filenames):
-                file_contents = tf.read_file(filename)
-                image = tf.image.decode_image(file_contents, channels=3)
                 
-                if args.random_crop:
-                    image = tf.random_crop(image, [args.image_size, args.image_size, 3])
-                else:
-                    image = tf.image.resize_image_with_crop_or_pad(image, args.image_size, args.image_size)
+                file_contents = tf.read_file(filename)
+#                 image = tf.py_func(np.load, [filename], tf.float32)
+                image = tf.image.decode_image(file_contents, channels=3)
+#                 image = tf.convert_to_tensor(file_contents, dtype=tf.float32)
+#                 print(file_contents)
+                
+#                 if args.random_crop:
+#                     image = tf.random_crop(image, [args.image_size, args.image_size, 6])
+#                 else:
+#                     image = tf.image.resize_image_with_crop_or_pad(image, args.image_size, args.image_size)
+                
+                image = tf.image.random_crop(image, [args.image_size, args.image_size, 3])
                 if args.random_flip:
                     image = tf.image.random_flip_left_right(image)
     
                 #pylint: disable=no-member
                 image.set_shape((args.image_size, args.image_size, 3))
+                # TBD remove standardization, remove float error
                 images.append(tf.image.per_image_standardization(image))
+#                 images.append(image)
             images_and_labels.append([images, label])
     
         image_batch, labels_batch = tf.train.batch_join(
@@ -426,9 +439,9 @@ def parse_arguments(argv):
         help='Upper bound on the amount of GPU memory that will be used by the process.', default=1.0)
     parser.add_argument('--pretrained_model', type=str,
         help='Load a pretrained model before training starts.')
-    parser.add_argument('--data_dir', type=str,
-        help='Path to the data directory containing aligned face patches.',
-        default='~/datasets/casia/casia_maxpy_mtcnnalign_182_160')
+#     parser.add_argument('--data_dir', type=str,
+#         help='Path to the data directory containing aligned face patches.',
+#         default='~/datasets/casia/casia_maxpy_mtcnnalign_182_160')
     parser.add_argument('--model_def', type=str,
         help='Model definition. Points to a module containing the definition of the inference graph.', default='models.inception_resnet_v1')
     parser.add_argument('--max_nrof_epochs', type=int,
@@ -472,13 +485,13 @@ def parse_arguments(argv):
     parser.add_argument('--learning_rate_schedule_file', type=str,
         help='File containing the learning rate schedule that is used when learning_rate is set to to -1.', default='data/learning_rate_schedule.txt')
 
-    # Parameters for validation on LFW
-    parser.add_argument('--lfw_pairs', type=str,
-        help='The file containing the pairs to use for validation.', default='data/pairs.txt')
-    parser.add_argument('--lfw_dir', type=str,
-        help='Path to the data directory containing aligned face patches.', default='')
-    parser.add_argument('--lfw_nrof_folds', type=int,
-        help='Number of folds to use for cross validation. Mainly used for testing.', default=10)
+#     # Parameters for validation on LFW
+#     parser.add_argument('--lfw_pairs', type=str,
+#         help='The file containing the pairs to use for validation.', default='data/pairs.txt')
+#     parser.add_argument('--lfw_dir', type=str,
+#         help='Path to the data directory containing aligned face patches.', default='')
+#     parser.add_argument('--lfw_nrof_folds', type=int,
+#         help='Number of folds to use for cross validation. Mainly used for testing.', default=10)
     return parser.parse_args(argv)
   
 
