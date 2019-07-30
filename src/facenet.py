@@ -42,7 +42,7 @@ import math
 from six import iteritems
 
 import sys
-sys.path.append("/jet/prs/rxrx1-utils")
+sys.path.append("/jet/prs/workspace/rxrx1-utils")
 import rxrx.io as rio
 
 def triplet_loss(anchor, positive, negative, alpha):
@@ -318,7 +318,7 @@ class ImageClass():
     def __len__(self):
         return len(self.image_paths)
 
-def get_control_datasets(image_size=512, basepath_data="/jet/prs/data/"):
+def get_control_datasets(original_image_size=512, basepath_data="/jet/prs/workspace/data/"):
     
     # load image metadata
     print("Reading RXRX1 metadata...")
@@ -326,8 +326,8 @@ def get_control_datasets(image_size=512, basepath_data="/jet/prs/data/"):
     
     # get control samples only
 #     df_contr = df[df["well_type"].isin(["positive_control"])]
-    df_contr = df[(df["dataset"]=="train") & (df["well_type"]=="positive_control")].head(1000)
-    print(f"Metadata dataframe for POSITIVE CONTROL wells shape: {df_contr.shape}")
+    df_contr = df[(df["dataset"]=="train") & (df["well_type"]=="positive_control")] ##.head(1000)
+    print(f"Metadata dataframe for TRAIN POSITIVE CONTROL wells shape: {df_contr.shape}")
     
     # create dictionary of empty datasets
     datasets = {"train" : [], "test" : []}
@@ -349,7 +349,7 @@ def get_control_datasets(image_size=512, basepath_data="/jet/prs/data/"):
             for row in df_contr_cl_ds.itertuples():
                 id_code = row.Index
                 site = row.site
-                image_path = basepath_data + f"rgb_{image_size}/" + f"{dataset_name}/" + f"{id_code}_s{site}.jpg"
+                image_path = basepath_data + f"rgb_{original_image_size}/" + f"{dataset_name}/" + f"{id_code}_s{site}.jpg"
                 image_paths.append(image_path)
             datasets[dataset_name].append(ImageClass(int(class_name), image_paths))
         
@@ -544,8 +544,8 @@ def calculate_val_far(threshold, dist, actual_issame):
     false_accept = np.sum(np.logical_and(predict_issame, np.logical_not(actual_issame)))
     n_same = np.sum(actual_issame)
     n_diff = np.sum(np.logical_not(actual_issame))
-    val = float(true_accept) / float(n_same)
-    far = float(false_accept) / float(n_diff)
+    val = float(true_accept) / (float(n_same) + 1.e-15)
+    far = float(false_accept) / (float(n_diff) + 1.e-15)
     return val, far
 
 def store_revision_info(src_path, output_dir, arg_string):

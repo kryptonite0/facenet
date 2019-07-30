@@ -64,7 +64,7 @@ def main(args):
     facenet.store_revision_info(src_path, log_dir, ' '.join(sys.argv))
 
     np.random.seed(seed=args.seed)
-    datasets = facenet.get_control_datasets()
+    datasets = facenet.get_control_datasets(args.original_image_size)
     train_set = datasets["train"]
     test_set = datasets["test"]
 #     train_set = facenet.get_dataset(args.data_dir)
@@ -74,18 +74,17 @@ def main(args):
     if args.pretrained_model:
         print('Pre-trained model: %s' % os.path.expanduser(args.pretrained_model))
     
-#     if args.lfw_dir:
-#         print('LFW directory: %s' % args.lfw_dir)
-#         # Read the file containing the pairs used for testing
-#         pairs = lfw.read_pairs(os.path.expanduser(args.lfw_pairs))
-#         # Get the paths for the corresponding images
-#         lfw_paths, actual_issame = lfw.get_paths(os.path.expanduser(args.lfw_dir), pairs)
-        
+    if 1:#args.lfw_pairs:
+        # Get the paths for the corresponding images
+        lfw_paths, actual_issame = lfw.get_paths_control(original_image_size=args.original_image_size, 
+                                                         n_pos_pairs=90, n_neg_pairs=90)
+        print(f"Evaluating on {len(actual_issame)} pairs.")
     
     with tf.Graph().as_default():
         tf.set_random_seed(args.seed)
         global_step = tf.Variable(0, trainable=False)
-
+    
+        print("Creating placeholders...")
         # Placeholder for the learning rate
         learning_rate_placeholder = tf.placeholder(tf.float32, name='learning_rate')
         
@@ -111,16 +110,11 @@ def main(args):
             for filename in tf.unstack(filenames):
                 
                 file_contents = tf.read_file(filename)
-#                 image = tf.py_func(np.load, [filename], tf.float32)
                 image = tf.image.decode_image(file_contents, channels=3)
-#                 image = tf.convert_to_tensor(file_contents, dtype=tf.float32)
-#                 print(file_contents)
-                
 #                 if args.random_crop:
 #                     image = tf.random_crop(image, [args.image_size, args.image_size, 6])
 #                 else:
 #                     image = tf.image.resize_image_with_crop_or_pad(image, args.image_size, args.image_size)
-                
                 image = tf.image.random_crop(image, [args.image_size, args.image_size, 3])
                 if args.random_flip:
                     image = tf.image.random_flip_left_right(image)
@@ -129,7 +123,6 @@ def main(args):
                 image.set_shape((args.image_size, args.image_size, 3))
                 # TBD remove standardization, remove float error
                 images.append(tf.image.per_image_standardization(image))
-#                 images.append(image)
             images_and_labels.append([images, label])
     
         image_batch, labels_batch = tf.train.batch_join(
@@ -141,6 +134,7 @@ def main(args):
         image_batch = tf.identity(image_batch, 'input')
         labels_batch = tf.identity(labels_batch, 'label_batch')
 
+        print("Building the inference graph...")
         # Build the inference graph
         prelogits, _ = network.inference(image_batch, args.keep_probability, 
             phase_train=phase_train_placeholder, bottleneck_layer_size=args.embedding_size,
@@ -169,9 +163,11 @@ def main(args):
         # Build the summary operation based on the TF collection of Summaries.
         summary_op = tf.summary.merge_all()
 
+        print("Start running operations on the Graph...")
         # Start running operations on the Graph.
         gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=args.gpu_memory_fraction)
-        sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))        
+        sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
+        print("Tensorflow session's devices:", sess.list_devices())
 
         # Initialize variables
         sess.run(tf.global_variables_initializer(), feed_dict={phase_train_placeholder:True})
@@ -194,7 +190,8 @@ def main(args):
                 epoch = step // args.epoch_size
                 # Train for one epoch
                 train(args, sess, train_set, epoch, image_paths_placeholder, labels_placeholder, labels_batch,
-                    batch_size_placeholder, learning_rate_placeholder, phase_train_placeholder, enqueue_op, input_queue, global_step, 
+                    batch_size_placeholder, learning_rate_placeholder, phase_train_placeholder, enqueue_op, 
+                    input_queue, global_step, 
                     embeddings, total_loss, train_op, summary_op, summary_writer, args.learning_rate_schedule_file,
                     args.embedding_size, anchor, positive, negative, triplet_loss)
 
@@ -202,10 +199,11 @@ def main(args):
                 save_variables_and_metagraph(sess, saver, summary_writer, model_dir, subdir, step)
 
                 # Evaluate on LFW
-                if args.lfw_dir:
+                if 1: #args.lfw_dir:
                     evaluate(sess, lfw_paths, embeddings, labels_batch, image_paths_placeholder, labels_placeholder, 
-                            batch_size_placeholder, learning_rate_placeholder, phase_train_placeholder, enqueue_op, actual_issame, args.batch_size, 
-                            args.lfw_nrof_folds, log_dir, step, summary_writer, args.embedding_size)
+                             batch_size_placeholder, learning_rate_placeholder, phase_train_placeholder, enqueue_op, 
+                             actual_issame, args.batch_size, 
+                             args.lfw_nrof_folds, log_dir, step, summary_writer, args.embedding_size)
 
     return model_dir
 
@@ -450,6 +448,8 @@ def parse_arguments(argv):
         help='Number of images to process in a batch.', default=90)
     parser.add_argument('--image_size', type=int,
         help='Image size (height, width) in pixels.', default=160)
+    parser.add_argument('--original_image_size', type=int,
+        help='Original image size (height, width) in pixels.', default=512)
     parser.add_argument('--people_per_batch', type=int,
         help='Number of people per batch.', default=45)
     parser.add_argument('--images_per_person', type=int,
@@ -485,15 +485,37 @@ def parse_arguments(argv):
     parser.add_argument('--learning_rate_schedule_file', type=str,
         help='File containing the learning rate schedule that is used when learning_rate is set to to -1.', default='data/learning_rate_schedule.txt')
 
-#     # Parameters for validation on LFW
-#     parser.add_argument('--lfw_pairs', type=str,
-#         help='The file containing the pairs to use for validation.', default='data/pairs.txt')
-#     parser.add_argument('--lfw_dir', type=str,
-#         help='Path to the data directory containing aligned face patches.', default='')
-#     parser.add_argument('--lfw_nrof_folds', type=int,
-#         help='Number of folds to use for cross validation. Mainly used for testing.', default=10)
+    # Parameters for validation
+#    parser.add_argument('--lfw_pairs', type=str,
+#        help='The file containing the pairs to use for validation.', default='data/pairs.txt')
+#    parser.add_argument('--lfw_dir', type=str,
+#        help='Path to the data directory containing aligned face patches.', default='')
+    parser.add_argument('--lfw_nrof_folds', type=int,
+        help='Number of folds to use for cross validation. Mainly used for testing.', default=10)
     return parser.parse_args(argv)
   
 
 if __name__ == '__main__':
-    main(parse_arguments(sys.argv[1:]))
+    ##main(parse_arguments(sys.argv[1:]))
+    argv = ["--logs_base_dir", "/jet/prs/workspace/logs/facenet", 
+        "--models_base_dir", "/jet/prs/workspace/models/facenet/",
+        "--image_size", "128",
+        "--original_image_size", "256",
+        "--model_def", "models.inception_resnet_v1",
+        "--optimizer", "ADAM",
+        "--learning_rate", "1.",
+        "--learning_rate_decay_epochs", "1",
+        "--learning_rate_decay_factor", "0.98",
+        "--max_nrof_epochs", "30",
+        "--batch_size", "180",
+        "--people_per_batch", "30",
+        "--images_per_person", "30",
+        "--epoch_size", "1000",
+        "--keep_probability", "0.8",
+        "--random_crop",
+        "--random_flip",
+        "--weight_decay", "5e-4",
+        "--embedding_size", "128",
+       ]
+
+    main(parse_arguments(argv))

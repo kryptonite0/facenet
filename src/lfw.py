@@ -31,6 +31,10 @@ import os
 import numpy as np
 import facenet
 
+import sys
+sys.path.append("/jet/prs/workspace/rxrx1-utils")
+import rxrx.io as rio
+
 def evaluate(embeddings, actual_issame, nrof_folds=10, distance_metric=0, subtract_mean=False):
     # Calculate evaluation metrics
     thresholds = np.arange(0, 4, 0.01)
@@ -43,26 +47,37 @@ def evaluate(embeddings, actual_issame, nrof_folds=10, distance_metric=0, subtra
         np.asarray(actual_issame), 1e-3, nrof_folds=nrof_folds, distance_metric=distance_metric, subtract_mean=subtract_mean)
     return tpr, fpr, accuracy, val, val_std, far
 
-def get_paths(lfw_dir, pairs):
-    nrof_skipped_pairs = 0
+def get_image_path(basepath_data, original_image_size, dataset, id_code, site):
+    return basepath_data + f"rgb_{original_image_size}/" + f"{dataset}/" + f"{id_code}_s{site}.jpg"
+
+def get_paths_control(original_image_size=512, basepath_data="/jet/prs/workspace/data/",
+                      n_pos_pairs=90, n_neg_pairs=90):
+    
+    # load image metadata
+    print("Reading RXRX1 metadata...")
+    df = rio.combine_metadata().reset_index()
+
+    # get control samples only
+    df_contr = df[(df["dataset"]=="test") & (df["well_type"]=="positive_control")]
+    print(f"Metadata dataframe for TEST POSITIVE CONTROL wells shape: {df_contr.shape}")
+
+    df_contr["image_path"] = df.apply(lambda row: get_image_path(basepath_data, 
+                                      original_image_size, "test", 
+                                      row["id_code"], row["site"]), axis=1)
     path_list = []
     issame_list = []
-    for pair in pairs:
-        if len(pair) == 3:
-            path0 = add_extension(os.path.join(lfw_dir, pair[0], pair[0] + '_' + '%04d' % int(pair[1])))
-            path1 = add_extension(os.path.join(lfw_dir, pair[0], pair[0] + '_' + '%04d' % int(pair[2])))
-            issame = True
-        elif len(pair) == 4:
-            path0 = add_extension(os.path.join(lfw_dir, pair[0], pair[0] + '_' + '%04d' % int(pair[1])))
-            path1 = add_extension(os.path.join(lfw_dir, pair[2], pair[2] + '_' + '%04d' % int(pair[3])))
-            issame = False
-        if os.path.exists(path0) and os.path.exists(path1):    # Only add the pair if both paths exist
-            path_list += (path0,path1)
-            issame_list.append(issame)
-        else:
-            nrof_skipped_pairs += 1
-    if nrof_skipped_pairs>0:
-        print('Skipped %d image pairs' % nrof_skipped_pairs)
+    sirnas = df_contr["sirna"].unique()
+    for i in range(n_pos_pairs):
+        sirna = np.random.choice(sirnas, size=1)[0]
+        (p0, p1) = np.random.choice(df_contr.loc[df_contr["sirna"]==sirna, "image_path"].values, size=2, replace=False)
+        path_list += (p0, p1)
+        issame_list.append(True)
+    for i in range(n_neg_pairs):
+        (sirna0, sirna1) = np.random.choice(sirnas, size=2, replace=False)
+        p0 = np.random.choice(df_contr.loc[df_contr["sirna"]==sirna0, "image_path"].values, size=1)[0]
+        p1 = np.random.choice(df_contr.loc[df_contr["sirna"]==sirna1, "image_path"].values, size=1)[0]
+        path_list += (p0, p1)
+        issame_list.append(False)
     
     return path_list, issame_list
   
